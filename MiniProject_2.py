@@ -1,8 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as sio
-import numpy as np
-import matplotlib.pyplot as plt
 
 from scipy.io import loadmat 
 from scipy.ndimage import convolve1d
@@ -12,35 +10,41 @@ from scipy.signal import welch
 import pandas as pd
 
 from sklearn.model_selection import train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.metrics import confusion_matrix
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import cross_val_score
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.feature_selection import SelectKBest
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
 import seaborn as sns
+
+from lib import *
 
 #--------------------------------------------------------------------------
 # Load data
 S2_A1_E1 = sio.loadmat('s2/S2_A1_E1.mat')
-print(S2_A1_E1.keys())
+# print(S2_A1_E1.keys())
 
 emg = S2_A1_E1['emg']
-print(emg.shape)
+# print(emg.shape)
 fs = 2000
 n_samples, n_channels = emg.shape
 time = np.arange(n_samples) / fs
+plot_global_psd_check(emg, fs=2000)
 
-"""
-# Remove channel 1 and 2
-bad_channels = [0, 1] 
-emg_clean = np.delete(emg, bad_channels, axis=1)
-n_channels = emg_clean.shape[1] 
-print(f"Removed channels {bad_channels}. Remaining channels: {n_channels}")
-"""
-#----------------------------------------------------------------------------
+stimulus = S2_A1_E1['restimulus']
+repetition = S2_A1_E1['rerepetition']
+
+# =================================================================
 # PART 1: Preprocessing
-# ---------------------
+# =================================================================
 
 # 1. Filter (Bandpass + Notch)
-bandpass_cutoff_frequencies_Hz = (5, 500) 
+bandpass_cutoff_frequencies_Hz = (20, 500) 
 sos = butter(N=4, Wn=bandpass_cutoff_frequencies_Hz, fs=fs, btype="bandpass", output="sos") 
 emg_filtered = sosfiltfilt(sos, emg.T).T 
 
@@ -49,34 +53,43 @@ for noise_frequency in powergrid_noise_frequencies_Hz:
     sos = butter(N=4, Wn=(noise_frequency - 2, noise_frequency + 2), fs=fs, btype="bandstop", output="sos")
     emg_filtered = sosfiltfilt(sos, emg_filtered.T).T
     
-# 2. Rectify
+"""    
+# 2. Rectify (Absolute value)
 emg_rectified = np.abs(emg_filtered)
 
-# 3. Envelope
-mov_mean_size = 400
-mov_mean_weights = np.ones(mov_mean_size) / mov_mean_size
-emg_continuous_env = convolve1d(emg_rectified, weights=mov_mean_weights, axis=0)
+# 3. Envelope (Low-Pass Filter)
+envelope_cutoff_Hz = 6  
+sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
+emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
+"""
 
-# Plot
-n_channels_to_plot = 10
-fig, axes = plt.subplots(n_channels_to_plot, 1, figsize=(10, 8), sharex=True)
+# 1. Apply TKEO (The "Contrast Booster")
+emg_tkeo = np.copy(emg_filtered)
+emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
+# (Note: The first and last samples remain 0 or raw, usually we ignore them)
 
-for i in range(n_channels_to_plot):
-    # Plotting the whole file (or use zoom_slice)
-    axes[i].plot(emg_continuous_env[:, i], color='tab:blue')
-    axes[i].set_ylabel(f'Ch {i+1}')
-    axes[i].grid(True)
+# 2. Rectify the TKEO signal
+emg_rectified = np.abs(emg_tkeo)
 
-axes[-1].set_xlabel('Time (samples)')
-plt.suptitle('Continuous Processed Envelopes (First 5 Channels)')
-plt.tight_layout()
-plt.show()
+# 3. Envelope (Standard Low-Pass)
+# You might want to slightly increase the cutoff to 10Hz to catch the fast peaks
+envelope_cutoff_Hz = 10 
+sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
+emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
 
+plot_time_domain_check(
+    raw_data=emg, 
+    filtered_data=emg_filtered, 
+    envelope_data=emg_continuous_env, 
+    stimulus_arr=stimulus, 
+    time_arr=time, 
+    target_stim=2, 
+    ch_idx=1
+)
+
+# =================================================================
 # PART 2: Segmentation
-# --------------------
-
-stimulus = S2_A1_E1['restimulus']
-repetition = S2_A1_E1['rerepetition']
+# =================================================================
 
 n_stimuli = len(np.unique(stimulus)) - 1 
 n_repetitions = len(np.unique(repetition)) - 1 
@@ -88,60 +101,13 @@ emg_envelopes = [[None for repetition_idx in range(n_repetitions)] for stimuli_i
 for stimuli_idx in range(n_stimuli):
     for repetition_idx in range(n_repetitions):
         idx = np.logical_and(stimulus == stimuli_idx + 1, repetition == repetition_idx + 1).flatten()
-        emg_windows[stimuli_idx][repetition_idx] = emg[idx, :]
+        emg_windows[stimuli_idx][repetition_idx] = emg_filtered[idx, :]
         emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
         
+ch_idx = 1
+plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
+
 #----------------------------------------------------------------------------------------
-
-def build_dataset_from_ninapro(emg, stimulus, repetition, features=None):
-    # Calculate the number of unique stimuli and repetitions, subtracting 1 to exclude the resting condition
-    n_stimuli = np.unique(stimulus).size - 1
-    n_repetitions = np.unique(repetition).size - 1
-    # Total number of samples is the product of stimuli and repetitions
-    n_samples = n_stimuli * n_repetitions
-    
-    # Number of channels in the EMG data
-    n_channels = emg.shape[1]
-    # Calculate the total number of features by summing the number of channels for each feature
-    n_features = sum(n_channels for feature in features)
-    
-    # Initialize the dataset and labels arrays with zeros
-    dataset = np.zeros((n_samples, n_features))
-    labels = np.zeros(n_samples)
-    current_sample_index = 0
-    
-    # Loop over each stimulus and repetition to extract features
-    for i in range(n_stimuli):
-        for j in range(n_repetitions):
-            # Assign the label for the current sample
-            labels[current_sample_index] = i + 1
-            # Calculate the current sample index based on stimulus and repetition
-            current_sample_index = i * n_repetitions + j
-            current_feature_index = 0
-            # Select the time steps corresponding to the current stimulus and repetition
-            selected_tsteps = np.logical_and(stimulus == i + 1, repetition == j + 1).squeeze()
-            
-            # Loop over each feature function provided
-            for feature in features:
-                # Determine the indices in the dataset where the current feature will be stored
-                selected_features = np.arange(current_feature_index, current_feature_index + n_channels)
-                # Apply the feature function to the selected EMG data and store the result
-                dataset[current_sample_index, selected_features] = feature(emg[selected_tsteps, :])
-                # Update the feature index for the next feature
-                current_feature_index += n_channels
-
-            # Move to the next sample
-            current_sample_index += 1
-            
-    # Return the constructed dataset and corresponding labels
-    return dataset, labels
-
-#----------------------------------------------------------------------------------------------
-
-def get_ssc(x, threshold=0):
-    diff = np.diff(x, axis=0) # shape becomes (N-1, Channels)
-    consecutive_prod = diff[:-1] * diff[1:]
-    return np.sum(consecutive_prod < 0, axis=0)
     
 # Define the features 
 emg_features = [
@@ -162,11 +128,150 @@ dataset, labels = build_dataset_from_ninapro(
     features=emg_features
     )
 
-print(f"dataset dimension: {dataset.shape}")
-print(f"labels dimension: {labels.shape}")
+# print(f"dataset dimension: {dataset.shape}")
+# print(f"labels dimension: {labels.shape}")
 
 #----------------------------------------------------------------------------------------------------
 
 # Split the dataset into training and testing sets
 # Here, 30% of the data is reserved for testing, and 70% is used for training
 X_train, X_test, y_train, y_test = train_test_split(dataset, labels, test_size=0.33)
+
+# ----------------------------------------------------------------------------------------------------
+# 4) Classification
+
+# Normalizing the data
+# StandardScaler is used to scale the features so that they have a mean of 0 and a standard deviation of 1
+scaler = StandardScaler()
+X_train_z = scaler.fit_transform(X_train)  # Fit the scaler on the training data and transform it
+X_test_z = scaler.transform(X_test)        # Transform the test data using the same scaler
+
+# Train a classifier on the normalized data
+clf = GradientBoostingClassifier()
+clf.fit(X_train_z, y_train)  # Fit the model on the training data
+
+# Predict the labels for the test set
+y_pred = clf.predict(X_test_z)
+
+# Performance metrics
+print_metrics(y_test, y_pred, "GB without hyperparameter optimization")
+
+#--------------------------------
+# # Perform cross-validation
+# scores = cross_val_score(clf, X_train_z, y_train, cv=3)
+# formatted_scores = [f"{s:.3f}" for s in scores]
+# print(f"4) Cross validation : Accuracy scores of all models: {formatted_scores} (GB without hyperparameter optimization)")
+# print(f"4) Cross validation : Mean accuracy across all models: {np.mean(scores):.3f} (GB without hyperparameter optimization)")
+
+#----------------------------------
+# Hyperparameter optimization
+
+param_grid = {
+    "n_estimators": [50, 100, 150], #default : 100
+    "learning_rate": [0.01, 0.05, 0.1], #default : 0.1
+    "max_depth": [2, 3, 4], #default : 3
+}
+
+grid = GridSearchCV(GradientBoostingClassifier(), param_grid, cv=3, n_jobs=-1) #3 folds cross validation
+grid.fit(X_train_z, y_train)
+
+# print(f"Best estimator: {grid.best_estimator_}")
+# print(f"Best hyperparameters: {grid.best_params_}")
+
+y_pred_HO = grid.predict(X_test_z)
+
+# Performance metrics
+print_metrics(y_test, y_pred_HO, "GB with hyperparameter optimization")
+
+#---------------------------------------
+# 5) Performance evaluation
+# Assignement :  Evaluate the performance using a metric of your choice. 
+#                Justify why the metric is suitable for this task and whether the performance is satisfactory.
+# Different possible metrics : Accuracy, F1-score, Confusion matrix
+
+# F1 = better than accuracy for imbalanced class distibutions
+# But we have exactly 10 repetitions for each movement, so the classes are balanced -> accuracy is sufficient
+# Confusion matrix : useful for qualitative analysis, but not really a comparison metric (too many values)
+#----------------------------------------
+# 6) Feature selection / dimension reduction using 2 methods : SelectKBest, PCA
+
+#----------------------
+# 6)a) First method : SelectKBest
+
+# Calculate mutual information between each feature and the target variable.
+# Mutual information is a measure of the dependency between variables.
+# A higher value indicates a stronger relationship.
+# mutual_info = mutual_info_classif(X_train_z, y_train)
+# print(f"Estimated mutual information between each feature and the target:\n {mutual_info}\n")
+
+# Select the top 10 features based on mutual information scores.
+# Note: You can change 'k' to 30 if you are working with more features.
+k_best = SelectKBest(mutual_info_classif, k=10)
+k_best.fit(X_train_z, y_train)
+
+# Transform the training and test datasets to only include the selected features.
+X_train_best = k_best.transform(X_train_z)
+X_test_best = k_best.transform(X_test_z)
+
+clf_kbest = GradientBoostingClassifier()
+clf_kbest.fit(X_train_best, y_train)
+
+# Predict the labels for the test set using the trained model.
+y_pred_kbest = clf_kbest.predict(X_test_best)
+
+# Performance metrics
+print_metrics(y_test, y_pred_kbest, "GB with kbest")
+
+#------
+# Select k-best with hyperparameter optimization
+
+grid_kbest = GridSearchCV(
+    GradientBoostingClassifier(),
+    param_grid,
+    cv=3,
+    n_jobs=-1
+)
+grid_kbest.fit(X_train_best, y_train)
+y_pred_kbest_HO = grid_kbest.predict(X_test_best)
+print_metrics(y_test, y_pred_kbest_HO, "GB with kbest with hyperparameter optimization")
+
+#----------------------------
+# 6)b) Second method : PCA
+
+# plot_pca(X_train_z) # plot to decide number of PCA components
+# result : we chose 10 components by lookint at the elbow of the curve
+
+pca = PCA(n_components=10) #10 components : chosen with the elbow method
+# pca.fit(X_train_z, y_train)
+pca.fit(X_train_z)
+
+X_train_pca = pca.transform(X_train_z)
+X_test_pca = pca.transform(X_test_z)
+
+# Train Gradient Boosting on PCA-reduced features
+clf_pca = GradientBoostingClassifier()
+clf_pca.fit(X_train_pca, y_train)
+
+y_pred_pca = clf_pca.predict(X_test_pca)
+
+# Performance metrics
+print_metrics(y_test, y_pred_pca, "GB with PCA")
+
+#--------
+# PCA with hyperparameter optimization
+grid_pca = GridSearchCV(
+    GradientBoostingClassifier(),
+    param_grid,
+    cv=3,
+    n_jobs=-1
+)
+grid_pca.fit(X_train_pca, y_train)
+y_pred_pca_HO = grid_pca.predict(X_test_pca)
+print_metrics(y_test, y_pred_pca_HO, "GB with PCA with hyperparameter optimization")
+
+########################
+# Confusion matrices
+plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca,  y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO)
+
+
+
