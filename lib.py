@@ -110,25 +110,35 @@ def print_metrics(y_test, y_pred, label):
     f1 = f1_score(y_test, y_pred, average="macro")
     print(f"Macro F1 : {f1:.3f} ({label})")
 
-def plot_conf_mat(y_test, y_pred, y_pred_opt, y_pred_kbest, y_pred_pca):
-    # Plot confusion matrices
-    predictions = [y_pred, y_pred_opt, y_pred_kbest, y_pred_pca]
+def plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca, y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO):
+
+    predictions = [y_pred, y_pred_kbest, y_pred_pca, y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO]
     titles = [
-        "GB (no hyperparam opt)",
-        "GB (with hyperparam opt)",
+        "GB (gradient boosting)",
         "GB with SelectKBest",
-        "GB with PCA"
+        "GB with PCA",
+        "GB with HO (hyperparam opt)",
+        "GB with SelectKBest with HO",
+        "GB with PCA with HO"
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
     for i, ax in enumerate(axes.flat):
         confmat = confusion_matrix(y_test, predictions[i], normalize="true")
-        sns.heatmap(confmat, annot=True, ax=ax)
-        ax.set_title(titles[i])
-        ax.set_xlabel("Predicted label")
-        ax.set_ylabel("True label")
+        sns.heatmap(confmat,
+                    annot=True,
+                    fmt=".2f",
+                    ax=ax,
+                    cbar=True,
+                    annot_kws={"size": 6})
 
-    plt.tight_layout()
+        ax.set_title(titles[i], fontsize=12)
+        ax.set_xlabel("Predicted label", fontsize=10)
+        ax.set_ylabel("True label", fontsize=10)
+        ax.tick_params(axis='both', labelsize=8)
+
+    plt.subplots_adjust(hspace=0.35, wspace=0.25)
     plt.show()
     # plt.show(block=False)
     # plt.pause(0.5)

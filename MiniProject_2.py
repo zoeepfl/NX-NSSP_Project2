@@ -158,10 +158,10 @@ grid.fit(X_train_z, y_train)
 # print(f"Best estimator: {grid.best_estimator_}")
 # print(f"Best hyperparameters: {grid.best_params_}")
 
-y_pred_opt = grid.predict(X_test_z)
+y_pred_HO = grid.predict(X_test_z)
 
 # Performance metrics
-print_metrics(y_test, y_pred_opt, "GB with hyperparameter optimization")
+print_metrics(y_test, y_pred_HO, "GB with hyperparameter optimization")
 
 #---------------------------------------
 # 5) Performance evaluation
@@ -181,7 +181,7 @@ print_metrics(y_test, y_pred_opt, "GB with hyperparameter optimization")
 # Calculate mutual information between each feature and the target variable.
 # Mutual information is a measure of the dependency between variables.
 # A higher value indicates a stronger relationship.
-mutual_info = mutual_info_classif(X_train_z, y_train)
+# mutual_info = mutual_info_classif(X_train_z, y_train)
 # print(f"Estimated mutual information between each feature and the target:\n {mutual_info}\n")
 
 # Select the top 10 features based on mutual information scores.
@@ -193,7 +193,7 @@ k_best.fit(X_train_z, y_train)
 X_train_best = k_best.transform(X_train_z)
 X_test_best = k_best.transform(X_test_z)
 
-clf_kbest = GradientBoostingClassifier(**grid.best_params_) # use the best parameters found before, You can also perform another round of grid search with the new features
+clf_kbest = GradientBoostingClassifier()
 clf_kbest.fit(X_train_best, y_train)
 
 # Predict the labels for the test set using the trained model.
@@ -201,6 +201,19 @@ y_pred_kbest = clf_kbest.predict(X_test_best)
 
 # Performance metrics
 print_metrics(y_test, y_pred_kbest, "GB with kbest")
+
+#------
+# Select k-best with hyperparameter optimization
+
+grid_kbest = GridSearchCV(
+    GradientBoostingClassifier(),
+    param_grid,
+    cv=3,
+    n_jobs=-1
+)
+grid_kbest.fit(X_train_best, y_train)
+y_pred_kbest_HO = grid_kbest.predict(X_test_best)
+print_metrics(y_test, y_pred_kbest_HO, "GB with kbest with hyperparameter optimization")
 
 #----------------------------
 # 6)b) Second method : PCA
@@ -215,28 +228,30 @@ pca.fit(X_train_z)
 X_train_pca = pca.transform(X_train_z)
 X_test_pca = pca.transform(X_test_z)
 
+# Train Gradient Boosting on PCA-reduced features
+clf_pca = GradientBoostingClassifier()
+clf_pca.fit(X_train_pca, y_train)
+
+y_pred_pca = clf_pca.predict(X_test_pca)
+
+# Performance metrics
+print_metrics(y_test, y_pred_pca, "GB with PCA")
+
+#--------
+# PCA with hyperparameter optimization
 grid_pca = GridSearchCV(
     GradientBoostingClassifier(),
     param_grid,
     cv=3,
     n_jobs=-1
 )
-
 grid_pca.fit(X_train_pca, y_train)
-
-# Train Gradient Boosting on PCA-reduced features
-# clf_pca = GradientBoostingClassifier(**grid_pca.best_params_)
-# clf_pca.fit(X_train_pca, y_train)
-# /-> not used because we used grid search model
-
-y_pred_pca = grid_pca.predict(X_test_pca)
-
-# Performance metrics
-print_metrics(y_test, y_pred_pca, "GB with PCA")
+y_pred_pca_HO = grid_pca.predict(X_test_pca)
+print_metrics(y_test, y_pred_pca_HO, "GB with PCA with hyperparameter optimization")
 
 ########################
 # Confusion matrices
-plot_conf_mat(y_test, y_pred, y_pred_opt, y_pred_kbest, y_pred_pca)
+plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca,  y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO)
 
 
 
