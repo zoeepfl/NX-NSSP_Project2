@@ -34,6 +34,7 @@ emg = S2_A1_E1['emg']
 fs = 2000
 n_samples, n_channels = emg.shape
 time = np.arange(n_samples) / fs
+plot_global_psd_check(emg, fs=2000)
 
 
 # # Remove channel 1 and 2
@@ -44,11 +45,15 @@ time = np.arange(n_samples) / fs
 
 
 #----------------------------------------------------------------------------
+stimulus = S2_A1_E1['restimulus']
+repetition = S2_A1_E1['rerepetition']
+
+# =================================================================
 # PART 1: Preprocessing
-# ---------------------
+# =================================================================
 
 # 1. Filter (Bandpass + Notch)
-bandpass_cutoff_frequencies_Hz = (5, 500) 
+bandpass_cutoff_frequencies_Hz = (20, 500) 
 sos = butter(N=4, Wn=bandpass_cutoff_frequencies_Hz, fs=fs, btype="bandpass", output="sos") 
 emg_filtered = sosfiltfilt(sos, emg.T).T 
 
@@ -57,22 +62,43 @@ for noise_frequency in powergrid_noise_frequencies_Hz:
     sos = butter(N=4, Wn=(noise_frequency - 2, noise_frequency + 2), fs=fs, btype="bandstop", output="sos")
     emg_filtered = sosfiltfilt(sos, emg_filtered.T).T
     
-# 2. Rectify
+"""    
+# 2. Rectify (Absolute value)
 emg_rectified = np.abs(emg_filtered)
 
-# 3. Envelope
-mov_mean_size = 400
-mov_mean_weights = np.ones(mov_mean_size) / mov_mean_size
-emg_continuous_env = convolve1d(emg_rectified, weights=mov_mean_weights, axis=0)
+# 3. Envelope (Low-Pass Filter)
+envelope_cutoff_Hz = 6  
+sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
+emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
+"""
 
-# Plot
-plot_channels(n_channels, emg_continuous_env)
+# 1. Apply TKEO (The "Contrast Booster")
+emg_tkeo = np.copy(emg_filtered)
+emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
+# (Note: The first and last samples remain 0 or raw, usually we ignore them)
 
+# 2. Rectify the TKEO signal
+emg_rectified = np.abs(emg_tkeo)
+
+# 3. Envelope (Standard Low-Pass)
+# You might want to slightly increase the cutoff to 10Hz to catch the fast peaks
+envelope_cutoff_Hz = 10 
+sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
+emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
+
+plot_time_domain_check(
+    raw_data=emg, 
+    filtered_data=emg_filtered, 
+    envelope_data=emg_continuous_env, 
+    stimulus_arr=stimulus, 
+    time_arr=time, 
+    target_stim=2, 
+    ch_idx=1
+)
+
+# =================================================================
 # PART 2: Segmentation
-# --------------------
-
-stimulus = S2_A1_E1['restimulus']
-repetition = S2_A1_E1['rerepetition']
+# =================================================================
 
 n_stimuli = len(np.unique(stimulus)) - 1 
 n_repetitions = len(np.unique(repetition)) - 1 
@@ -84,9 +110,12 @@ emg_envelopes = [[None for repetition_idx in range(n_repetitions)] for stimuli_i
 for stimuli_idx in range(n_stimuli):
     for repetition_idx in range(n_repetitions):
         idx = np.logical_and(stimulus == stimuli_idx + 1, repetition == repetition_idx + 1).flatten()
-        emg_windows[stimuli_idx][repetition_idx] = emg[idx, :]
+        emg_windows[stimuli_idx][repetition_idx] = emg_filtered[idx, :]
         emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
         
+ch_idx = 1
+plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
+
 #----------------------------------------------------------------------------------------
     
 # Define the features 
