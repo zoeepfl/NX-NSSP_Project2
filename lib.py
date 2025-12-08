@@ -19,6 +19,7 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.feature_selection import SelectKBest
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from statsmodels.regression.linear_model import yule_walker
 
 import seaborn as sns
 
@@ -70,7 +71,134 @@ def get_ssc(x, threshold=0): #slope sign changes
     diff = np.diff(x, axis=0) # shape becomes (N-1, Channels)
     consecutive_prod = diff[:-1] * diff[1:]
     return np.sum(consecutive_prod < 0, axis=0)
+
+def plot_movements(emg_data, stimulus_arr, time_arr):
+    """
+    Plots raw EMG data in two figures (2x3 subplots each) for the 12 movements.
+    - Figure 1: Movements 1-6
+    - Figure 2: Movements 7-12
+    """
+    n_samples, n_channels = emg_data.shape
+    colors = plt.cm.jet(np.linspace(0, 1, n_channels))
+
+    # --- Helper function to plot a single movement on an ax ---
+    def plot_on_ax(ax, stim_id):
+        # Find indices for this movement
+        stim_indices = np.where(stimulus_arr == stim_id)[0]
+        
+        if len(stim_indices) > 0:
+            # Add padding
+            start_idx = max(0, stim_indices[0] - 200)
+            end_idx = min(n_samples, stim_indices[-1] + 200)
+            
+            t_slice = time_arr[start_idx:end_idx]
+            data_slice = emg_data[start_idx:end_idx, :]
+            
+            # Plot all channels superimposed
+            for ch in range(n_channels):
+                ax.plot(t_slice, data_slice[:, ch], 
+                        color=colors[ch], 
+                        alpha=0.6, 
+                        linewidth=0.8)
+            
+            ax.set_title(f'Movement {stim_id}')
+            ax.grid(True, alpha=0.3)
+        else:
+            ax.text(0.5, 0.5, 'No Data', ha='center', va='center')
+            ax.set_title(f'Movement {stim_id} (Missing)')
+
+    # --- Setup Legend Lines (Used for both figures) ---
+    legend_lines = [plt.Line2D([0], [0], color=colors[i], lw=2) for i in range(n_channels)]
+    legend_labels = [f'Ch {i+1}' for i in range(n_channels)]
+
+    # FIGURE 1: Movements 1 to 6
+    fig1, axes1 = plt.subplots(2, 3, figsize=(15, 7), sharey=True)
+    fig1.suptitle('Raw Data: Movements 1 - 6', fontsize=16)
+    axes1_flat = axes1.flatten()
+
+    for i, stim_id in enumerate(range(1, 7)): # 1 to 6
+        plot_on_ax(axes1_flat[i], stim_id)
+        
+        # Only set labels on outer edges to keep it clean
+        if i >= 3: axes1_flat[i].set_xlabel('Time (s)')
+        if i % 3 == 0: axes1_flat[i].set_ylabel('Amplitude (mV)')
+        
+    fig1.legend(legend_lines, legend_labels, 
+                loc='lower center', ncol=n_channels, 
+                bbox_to_anchor=(0.5, 0.0))
+    plt.tight_layout(rect=[0, 0.05, 1, 1]) # Adjust layout for legend space
+    plt.show()
+
+    # FIGURE 2: Movements 7 to 12
+    fig2, axes2 = plt.subplots(2, 3, figsize=(15, 7), sharey=True)
+    fig2.suptitle('Raw Data: Movements 7 - 12', fontsize=16)
+    axes2_flat = axes2.flatten()
+
+    for i, stim_id in enumerate(range(7, 13)): # 7 to 12
+        plot_on_ax(axes2_flat[i], stim_id)
+        
+        if i >= 3: axes2_flat[i].set_xlabel('Time (s)')
+        if i % 3 == 0: axes2_flat[i].set_ylabel('Amplitude (mV)')
+
+    fig2.legend(legend_lines, legend_labels, 
+                loc='lower center', ncol=n_channels, 
+                bbox_to_anchor=(0.5, 0.0))
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+    plt.show()
+
+def plot_rejection_results(emg_original, emg_cleaned, fs, trim_s=0.2):
+    """
+    Visualizes kept vs. rejected trials based on RMS amplitude.
     
+    Parameters:
+    - emg_original: The raw/enveloped data before cleaning (emg_envelopes)
+    - emg_cleaned: The data after cleaning (emg_envelopes_cleaned)
+    - fs: Sampling frequency
+    - trim_s: Time in seconds to ignore at start of trial for RMS calc (default 0.2s)
+    """
+    plt.figure(figsize=(12, 6))
+    
+    n_stimuli = len(emg_original)
+    n_repetitions = len(emg_original[0])
+    trim_samples = int(trim_s * fs)
+
+    # We use these flags to ensure the legend only appears once, not 100 times
+    label_rejected_done = False
+    label_kept_done = False
+
+    for s in range(n_stimuli):
+        for r in range(n_repetitions):
+            
+            # 1. Plot Original (Grey X)
+            # This represents the "Potential" data
+            original = emg_original[s][r]
+            if original is not None and original.shape[0] > trim_samples:
+                val = np.sqrt(np.mean(original[trim_samples:]**2))
+                
+                # Logic to handle legend labels cleanly
+                lbl = 'Rejected' if not label_rejected_done else ""
+                plt.scatter(s+1, val, color='lightgray', marker='x', s=50, label=lbl)
+                if not label_rejected_done: label_rejected_done = True
+
+            # 2. Plot Kept (Blue Dot)
+            # This represents the data that passed your filters
+            kept = emg_cleaned[s][r]
+            if kept is not None:
+                # Note: kept data is usually already trimmed by your cleaning function
+                val = np.sqrt(np.mean(kept**2))
+                
+                lbl = 'Kept' if not label_kept_done else ""
+                plt.scatter(s+1, val, color='tab:blue', s=50, label=lbl)
+                if not label_kept_done: label_kept_done = True
+
+    plt.title('Trial Rejection Results (Blue = Kept, Grey X = Rejected)')
+    plt.xlabel('Movement ID')
+    plt.ylabel('Trial RMS Amplitude')
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc='upper right')
+    plt.tight_layout()
+    plt.show()
+
 def plot_global_psd_check(data, fs, nperseg=1024):
     """
     Plots the Power Spectral Density (PSD) of all channels superimposed on one figure.
@@ -190,6 +318,73 @@ def plot_spectral_check(raw_data, filtered_data, ch_idx, fs, nperseg=1024):
     plt.xlim(0, 400)
     plt.tight_layout()
     plt.show()
+
+
+def clean_and_reject_trials_hard_limit(emg_data_structure, fs, trim_ms=0, threshold=2.5, absolute_max=None):
+    """
+    Combines Robust Statistics (Median/MAD) with a HARD Upper Limit.
+    
+    Parameters:
+    - absolute_max: Any trial with RMS > this value is AUTOMATICALLY rejected. 
+                    (e.g., set to 0.006 based on your plot).
+    """
+    n_stimuli = len(emg_data_structure)
+    n_repetitions = len(emg_data_structure[0])
+    
+    cleaned_structure = [[None for _ in range(n_repetitions)] for _ in range(n_stimuli)]
+    trim_samples = int((trim_ms / 1000) * fs)
+    
+    print(f"--- Cleaning Report (Hard Limit + Robust Stats) ---")
+
+    for s in range(n_stimuli):
+        rms_values = []
+        valid_indices = []
+        
+        # 1. Collect RMS
+        for r in range(n_repetitions):
+            trial = emg_data_structure[s][r]
+            if trial is not None and trial.shape[0] > trim_samples:
+                cropped_signal = trial[trim_samples:, :]
+                rms = np.sqrt(np.mean(cropped_signal**2))
+                
+                # --- CHECK 1: HARD LIMIT ---
+                if absolute_max is not None and rms > absolute_max:
+                     print(f"  -> Rejected Mvt {s+1}, Rep {r+1} [HARD LIMIT]: RMS {rms:.4f} > {absolute_max}")
+                     cleaned_structure[s][r] = None # Reject immediately
+                else:
+                    # Keep for statistical checking
+                    rms_values.append(rms)
+                    valid_indices.append(r)
+            else:
+                cleaned_structure[s][r] = None
+
+        # 2. Check Statistics (only on trials that passed the Hard Limit)
+        if len(rms_values) > 0:
+            rms_array = np.array(rms_values)
+            median_rms = np.median(rms_array)
+            mad_rms = np.median(np.abs(rms_array - median_rms)) * 1.4826
+            
+            upper_bound = median_rms + (threshold * mad_rms)
+            lower_bound = median_rms - (threshold * mad_rms)
+            
+            # Ensure we don't accidentally reject valid low-power signals if MAD is tiny
+            lower_bound = max(0, lower_bound) 
+
+            for r in valid_indices:
+                idx = valid_indices.index(r)
+                val = rms_values[idx]
+                
+                # --- CHECK 2: STATISTICAL OUTLIER ---
+                if lower_bound <= val <= upper_bound:
+                    cleaned_structure[s][r] = emg_data_structure[s][r][trim_samples:, :]
+                else:
+                    cleaned_structure[s][r] = None
+                    reason = "Statistically High" if val > upper_bound else "Statistically Low"
+                    print(f"  -> Rejected Mvt {s+1}, Rep {r+1} [{reason}]: RMS {val:.4f} (Bounds: {lower_bound:.4f}-{upper_bound:.4f})")
+        else:
+            print(f"Movement {s+1}: All trials rejected by Hard Limit or Empty.")
+
+    return cleaned_structure
 
 def plot_pca(X_train_z) :
     # Fit PCA with ALL components

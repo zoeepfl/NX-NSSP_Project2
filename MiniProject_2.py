@@ -19,6 +19,7 @@ from sklearn.feature_selection import mutual_info_classif
 from sklearn.feature_selection import SelectKBest
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from statsmodels.regression.linear_model import yule_walker
 
 import seaborn as sns
 
@@ -34,20 +35,12 @@ emg = S2_A1_E1['emg']
 fs = 2000
 n_samples, n_channels = emg.shape
 time = np.arange(n_samples) / fs
-plot_global_psd_check(emg, fs=2000)
+#plot_global_psd_check(emg, fs=2000)
 
-
-# # Remove channel 1 and 2
-# bad_channels = [0, 1] 
-# emg = np.delete(emg, bad_channels, axis=1)
-# n_channels = emg.shape[1] 
-# print(f"Removed channels {bad_channels}. Remaining channels: {n_channels}")
-
-
-#----------------------------------------------------------------------------
 stimulus = S2_A1_E1['restimulus']
 repetition = S2_A1_E1['rerepetition']
 
+#plot_movements(emg, stimulus, time)
 # =================================================================
 # PART 1: Preprocessing
 # =================================================================
@@ -86,6 +79,7 @@ envelope_cutoff_Hz = 10
 sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
 emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
 
+'''
 plot_time_domain_check(
     raw_data=emg, 
     filtered_data=emg_filtered, 
@@ -94,7 +88,7 @@ plot_time_domain_check(
     time_arr=time, 
     target_stim=2, 
     ch_idx=1
-)
+)'''
 
 # =================================================================
 # PART 2: Segmentation
@@ -114,10 +108,29 @@ for stimuli_idx in range(n_stimuli):
         emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
         
 ch_idx = 1
-plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
+#plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
 
 #----------------------------------------------------------------------------------------
-    
+
+#emg_envelopes_cleaned = clean_and_reject_trials(emg_envelopes, fs=2000, trim_ms=0, threshold=3)
+
+emg_envelopes_cleaned = clean_and_reject_trials_hard_limit(
+    emg_envelopes, 
+    fs=2000, 
+    trim_ms=0, 
+    threshold=3, 
+    absolute_max=0.006
+)
+
+'''
+# --- Visualization of Rejection ---
+plot_rejection_results(
+    emg_original=emg_envelopes, 
+    emg_cleaned=emg_envelopes_cleaned, 
+    fs=2000, 
+    trim_s=0.2
+)'''
+
 # Define the features 
 emg_features = [
     lambda x: np.mean(x, axis=0),                                        # Mean Absolute Value (MAV)
