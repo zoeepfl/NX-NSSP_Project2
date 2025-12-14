@@ -31,131 +31,55 @@ S2_A1_E1 = sio.loadmat('s2/S2_A1_E1.mat')
 # print(S2_A1_E1.keys())
 
 emg = S2_A1_E1['emg']
-# print(emg.shape)
-fs = 2000
+
+fs = 100
 n_samples, n_channels = emg.shape
 time = np.arange(n_samples) / fs
-#plot_global_psd_check(emg, fs=2000)
+plot_global_psd_check(emg, fs=100)
 
 stimulus = S2_A1_E1['restimulus']
 repetition = S2_A1_E1['rerepetition']
 
-#plot_movements(emg, stimulus, time)
-# =================================================================
-# PART 1: Preprocessing
-# =================================================================
-
-# 1. Filter (Bandpass + Notch)
-bandpass_cutoff_frequencies_Hz = (20, 500) 
-sos = butter(N=4, Wn=bandpass_cutoff_frequencies_Hz, fs=fs, btype="bandpass", output="sos") 
-emg_filtered = sosfiltfilt(sos, emg.T).T 
-
-powergrid_noise_frequencies_Hz = [harmonic_idx*50 for harmonic_idx in range(1,3)] 
-for noise_frequency in powergrid_noise_frequencies_Hz:
-    sos = butter(N=4, Wn=(noise_frequency - 2, noise_frequency + 2), fs=fs, btype="bandstop", output="sos")
-    emg_filtered = sosfiltfilt(sos, emg_filtered.T).T
-    
-"""    
-# 2. Rectify (Absolute value)
-emg_rectified = np.abs(emg_filtered)
-
-# 3. Envelope (Low-Pass Filter)
-envelope_cutoff_Hz = 6  
-sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
-emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
-"""
-
-# 1. Apply TKEO (The "Contrast Booster")
-emg_tkeo = np.copy(emg_filtered)
-emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
-# (Note: The first and last samples remain 0 or raw, usually we ignore them)
-
-# 2. Rectify the TKEO signal
-emg_rectified = np.abs(emg_tkeo)
-
-# 3. Envelope (Standard Low-Pass)
-# You might want to slightly increase the cutoff to 10Hz to catch the fast peaks
-envelope_cutoff_Hz = 10 
-sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
-emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
-
-'''
-plot_time_domain_check(
-    raw_data=emg, 
-    filtered_data=emg_filtered, 
-    envelope_data=emg_continuous_env, 
-    stimulus_arr=stimulus, 
-    time_arr=time, 
-    target_stim=2, 
-    ch_idx=1
-)'''
+plot_movements(emg, stimulus, time)
 
 # =================================================================
-# PART 2: Segmentation
-# =================================================================
+# Segmentation
 
 n_stimuli = len(np.unique(stimulus)) - 1 
 n_repetitions = len(np.unique(repetition)) - 1 
 
-# Initializing the data structure
-emg_windows = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)] 
-emg_envelopes = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)]
+# Initialisation
+emg_windows = [[None for r in range(n_repetitions)] for s in range(n_stimuli)] 
 
-for stimuli_idx in range(n_stimuli):
-    for repetition_idx in range(n_repetitions):
-        idx = np.logical_and(stimulus == stimuli_idx + 1, repetition == repetition_idx + 1).flatten()
-        emg_windows[stimuli_idx][repetition_idx] = emg_filtered[idx, :]
-        emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
-        
-ch_idx = 1
-#plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
+for s in range(n_stimuli):
+    for r in range(n_repetitions):
+        idx = np.logical_and(stimulus == s + 1, repetition == r + 1).flatten()
+        emg_windows[s][r] = emg[idx, :]
 
-#----------------------------------------------------------------------------------------
+# =================================================================
+# Features
 
-#emg_envelopes_cleaned = clean_and_reject_trials(emg_envelopes, fs=2000, trim_ms=0, threshold=3)
+emg_features = [
+    lambda x: np.mean(x, axis=0),             # MAV 
+    lambda x: np.max(x, axis=0),              # Peak Amplitude
+    lambda x: np.std(x, axis=0),              # Standard Deviation
+    lambda x: np.sqrt(np.mean(x**2, axis=0)), # RMS
+    lambda x: np.sum(np.abs(np.diff(x, axis=0)), axis=0) # Waveform Length
+]
 
-emg_envelopes_cleaned = clean_and_reject_trials_hard_limit(
-    emg_envelopes, 
-    fs=2000, 
-    trim_ms=0, 
-    threshold=3, 
-    absolute_max=0.006
+# =================================================================
+# Building dataset
+
+dataset, labels = build_dataset(
+    emg_windows=emg_windows,
+    features=emg_features
 )
 
-'''
-# --- Visualization of Rejection ---
-plot_rejection_results(
-    emg_original=emg_envelopes, 
-    emg_cleaned=emg_envelopes_cleaned, 
-    fs=2000, 
-    trim_s=0.2
-)'''
+print(f"Dataset Shape: {dataset.shape}")
 
-# Define the features 
-emg_features = [
-    lambda x: np.mean(x, axis=0),                                        # Mean Absolute Value (MAV)
-    lambda x: np.std(x, axis=0),                                         # Standard Deviation
-    lambda x: np.max(x, axis=0),                                         # Peak Amplitude
-    lambda x: np.sqrt(np.mean(x**2, axis=0)),                            # Root Mean Square (RMS)
-    lambda x: np.sum(np.abs(np.diff(x, axis=0)), axis=0),                # Waveform length (WL)
-    lambda x: get_ssc(x, threshold=0)                                    # Slope sign changes (SSC)
-
-]
-#Feel free to add more features, e.g. frequency domain features from the two papers 
-
-dataset, labels = build_dataset_from_ninapro(
-    emg=emg,
-    stimulus=stimulus,
-    repetition=repetition,
-    features=emg_features
-    )
-
-# print(f"dataset dimension: {dataset.shape}")
-# print(f"labels dimension: {labels.shape}")
-
-#----------------------------------------------------------------------------------------------------
-
+# =================================================================
 # Split the dataset into training and testing sets
+
 # Here, 30% of the data is reserved for testing, and 70% is used for training
 X_train, X_test, y_train, y_test = train_test_split(dataset, labels, test_size=0.33)
 
