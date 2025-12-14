@@ -47,7 +47,7 @@ from lib import *
 
 # 1. Filter (Bandpass + Notch)
 
-def bandpass_filter_emg(emg, fs, lowcut=20, highcut=500, order=4):
+def bandpass_filter_emg(emg, fs):
     bandpass_cutoff_frequencies_Hz = (20, 500) 
     sos = butter(N=4, Wn=bandpass_cutoff_frequencies_Hz, fs=fs, btype="bandpass", output="sos") 
     emg_filtered = sosfiltfilt(sos, emg.T).T 
@@ -81,7 +81,7 @@ def preprocess_emg(emg_filtered, fs):
     envelope_cutoff_Hz = 10 
     sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
     emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
-    return emg_continuous_env,emg_filtered
+    return emg_continuous_env
 
 '''
 plot_time_domain_check(
@@ -302,6 +302,238 @@ def PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid):
     print_metrics(y_test, y_pred_pca_HO, "GB with PCA with hyperparameter optimization")
     return y_pred_pca, y_pred_pca_HO
 
+def plot_feature_multi_subject(datasets_all, feature_index, n_channels, feature_names=None):
+    """
+    Affiche pour UNE feature donnée un subplot par subject,
+    tous regroupés dans une seule figure.
+
+    :param datasets_all: liste ou dict de datasets (dataset[i] = dataset du subject i)
+    :param feature_index: index de la feature
+    :param n_channels: nombre de canaux EMG
+    :param feature_names: noms des features
+    """
+
+    if feature_names is None:
+        feature_names = ["MAV", "STD", "MAX", "RMS", "WL", "SSC"]
+
+    n_subjects = len(datasets_all)
+
+    # Figure globale
+    fig, axes = plt.subplots(n_subjects, 1, figsize=(12, 4*n_subjects), sharex=True)
+    if n_subjects == 1:
+        axes = [axes]  # uniformiser
+
+    for i, (subj_id, dataset) in enumerate(zip(range(n_subjects), datasets_all)):
+
+        start = feature_index * n_channels
+        end = (feature_index + 1) * n_channels
+
+        feat_data = dataset[:, start:end]  # shape (samples, channels)
+
+        axes[i].boxplot(
+            [feat_data[:, ch] for ch in range(n_channels)],
+            labels=[f"Ch {c+1}" for c in range(n_channels)]
+        )
+
+        axes[i].set_title(f"Subject {subj_id} — Feature: {feature_names[feature_index]}")
+        axes[i].set_ylabel("Valeurs")
+        axes[i].grid(True)
+
+    axes[-1].set_xlabel("Canaux EMG")
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_feature_violin_multi_subject(datasets_all, feature_index, n_channels, feature_names=None):
+    if feature_names is None:
+        feature_names = ["MAV", "STD", "MAX", "RMS", "WL", "SSC"]
+
+    n_subjects = len(datasets_all)
+    fig, axes = plt.subplots(n_subjects, 1, figsize=(12, 4*n_subjects), sharex=True)
+
+    if n_subjects == 1:
+        axes = [axes]
+
+    for i, dataset in enumerate(datasets_all):
+        start = feature_index * n_channels
+        end = (feature_index + 1) * n_channels
+
+        feat_data = dataset[:, start:end]
+
+        axes[i].violinplot([feat_data[:, ch] for ch in range(n_channels)], showmedians=True)
+        axes[i].set_title(f"Subject {i} — {feature_names[feature_index]}")
+        axes[i].set_ylabel("Valeur")
+        axes[i].set_xticks(range(1, n_channels + 1))
+        axes[i].set_xticklabels([f"Ch {c+1}" for c in range(n_channels)])
+        axes[i].grid(True)
+
+    axes[-1].set_xlabel("Canaux EMG")
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+def plot_feature_grid(datasets_all, feature_index, n_channels, n_cols=2, feature_names=None):
+    """
+    Affiche les plots dans une grille (horizontal puis vertical), pour éviter
+    la superposition et rendre la figure lisible.
+    """
+
+    if feature_names is None:
+        feature_names = ["MAV", "STD", "MAX", "RMS", "WL", "SSC"]
+
+    n_subjects = len(datasets_all)
+    n_rows = int(np.ceil(n_subjects / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6*n_cols, 4*n_rows))
+    axes = np.array(axes).reshape(n_rows, n_cols)
+
+    for idx, dataset in enumerate(datasets_all):
+
+        r = idx // n_cols
+        c = idx % n_cols
+        ax = axes[r, c]
+
+        start = feature_index * n_channels
+        end = (feature_index + 1) * n_channels
+
+        feat_data = dataset[:, start:end]
+
+        ax.boxplot([feat_data[:, ch] for ch in range(n_channels)],
+                    labels=[f"Ch {c+1}" for c in range(n_channels)])
+
+        ax.set_title(f"Subject {idx} — {feature_names[feature_index]}")
+        ax.set_ylabel("Valeur")
+        ax.grid(True)
+
+    # Supprimer les cases vides si la grille n'est pas complète
+    for empty_idx in range(n_subjects, n_rows*n_cols):
+        r = empty_idx // n_cols
+        c = empty_idx % n_cols
+        axes[r, c].axis("off")
+
+    plt.tight_layout()
+    plt.show()
+
+def compute_channel1_feature_means(datasets_all, n_channels=10, n_features=6):
+    """
+    datasets_all : liste de datasets des subjects, chacun shape = (120, 60)
+    Retourne une matrice (n_subjects, n_features)
+    """
+    n_subjects = len(datasets_all)
+
+    # Matrice où on stocke la moyenne pour canal 1 de chaque feature
+    result = np.zeros((n_subjects, n_features))
+
+    for s, dataset in enumerate(datasets_all):
+        for f in range(n_features):
+            start = f * n_channels
+            ch1_index = start + 0       # canal 1 = index 0
+            # moyenne sur 120 samples
+            result[s, f] = np.mean(dataset[:, ch1_index])
+
+    return result
+
+
+def compute_channel1_feature1_means(datasets_all, n_channels=10, feature_index=1):
+    """
+    Calcule la moyenne de la feature 1 (feature_index=1) au canal 1 (index 0)
+    pour chaque subject.
+
+    Retourne un vecteur de taille (n_subjects,)
+    """
+    n_subjects = len(datasets_all)
+    result = np.zeros(n_subjects)
+
+    for s, dataset in enumerate(datasets_all):
+        start = feature_index * n_channels
+        ch1_index = start + 0   # canal 1 = index 0
+        result[s] = np.mean(dataset[:, ch1_index])
+
+    return result
+
+from matplotlib.gridspec import GridSpec 
+
+def Mean_all_features_one_chanel(datasets_all, n_channels=10, n_features=6, feature_names=None):
+   
+    n_subjects = len(datasets_all)
+
+    # Matrice features × subjects
+    mean_matrix = np.zeros((n_features, n_subjects))
+
+    for f in range(n_features):
+        for s, dataset in enumerate(datasets_all):
+            start = f * n_channels
+            ch1_index = start + 0         # canal 1
+            mean_matrix[f, s] = np.mean(dataset[:, ch1_index])
+    return mean_matrix
+
+
+def plot_heatmaps_all_features(mean_matrix, n_channels=10, n_features=6, feature_names=None):
+    if feature_names is None:
+        feature_names = ["MAV", "STD", "MAX", "RMS", "WL", "SSC"]
+
+    fig = plt.figure(figsize=(14, 2.3 * n_features))
+    gs = GridSpec(n_features, 1, figure=fig, hspace=0.55)   
+    n_subjects = mean_matrix.shape[1]
+    axes = []
+    for f in range(n_features):
+        ax = fig.add_subplot(gs[f, 0])
+        axes.append(ax)
+        
+        heat_data = mean_matrix[f][np.newaxis, :]          
+        im = ax.imshow(heat_data, aspect='auto', cmap='viridis')
+
+        ax.set_yticks([0])
+        ax.set_yticklabels([feature_names[f]])
+
+        # Padding supérieur pour éviter de toucher les labels X
+        ax.set_title(f"Feature : {feature_names[f]} (Canal 1)", pad=12, fontsize=10)
+
+        # Tous les axes sauf le dernier n'affichent pas les ticks X
+        if f < n_features - 1:
+            ax.set_xticks([])
+
+    # --- Dernier subplot : labels X + nom de l’axe ---
+    axes[-1].set_xticks(range(n_subjects))
+    axes[-1].set_xticklabels([str(i+1) for i in range(n_subjects)], rotation=45)
+    axes[-1].set_xlabel("Subject")
+
+    # --- Colorbar sur le côté (pas superposée) ---
+    cbar = fig.colorbar(im, ax=axes, orientation='vertical', fraction=0.03, pad=0.02)
+    cbar.set_label("Mean value", rotation=90)
+
+    #plt.tight_layout(rect=[0, 0, 0.96, 1])  
+    plt.show()
+
+
+def plot_cv_scores(accuracy_scores, f1_scores):
+    subjects = np.arange(1, len(accuracy_scores) + 1)
+
+    plt.figure(figsize=(12, 8))
+
+    # --- Plot Accuracy ---
+    plt.subplot(2, 1, 1)
+    plt.plot(subjects, accuracy_scores, marker='o')
+    plt.title("Accuracy per Subject")
+    plt.xlabel("Subject")
+    plt.ylabel("Accuracy")
+    plt.grid(True)
+    plt.xticks(subjects)
+
+    # --- Plot F1 Score ---
+    plt.subplot(2, 1, 2)
+    plt.plot(subjects, f1_scores, marker='o')
+    plt.title("F1 Score per Subject")
+    plt.xlabel("Subject")
+    plt.ylabel("F1 Score")
+    plt.grid(True)
+    plt.xticks(subjects)
+
+    plt.tight_layout()
+    plt.show()
+
 
 ########################
 # Confusion matrices
@@ -318,34 +550,36 @@ def main():
     fs = 2000
 
     #1) Preprocessing
-    emg_filtered = bandpass_filter_emg(emg_raw, fs)
-    emg_continusous_env, emg_filtered = preprocess_emg(emg_filtered, fs)
-    emg_envelopes_cleaned = clean_emg_envelope(emg_filtered, emg_continusous_env,stimulus,repetition)
+    # emg_filtered = bandpass_filter_emg(emg_raw, fs)
+    # emg_continusous_env= preprocess_emg(emg_filtered, fs)
+    # emg_envelopes_cleaned = clean_emg_envelope(emg_filtered, emg_continusous_env,stimulus,repetition)
 
 
 
     #3) Dataset building with feature extraction
-    dataset, labels = build_dataset_with_features(emg_raw,stimulus,repetition)
+    #dataset, labels = build_dataset_with_features(emg_filtered,stimulus,repetition)
 
+    #plot_feature(dataset, feature_index=0, n_channels=emg_raw.shape[1])  # Plot MAV feature distribution
+    
     # 2) Split the dataset into training and testing sets
     # Here, 30% of the data is reserved for testing, and 70% is used for training
-    X_train, X_test, y_train, y_test = train_test_split(dataset, labels, test_size=0.33)
+    #X_train, X_test, y_train, y_test = train_test_split(dataset, labels, test_size=0.33)
 
     #4) Classification
     # Normalizing the data
     # StandardScaler is used to scale the features so that they have a mean of 0 and a standard deviation of 1
-    scaler = StandardScaler()
-    X_train_z = scaler.fit_transform(X_train)  # Fit the scaler on the training data and transform it
-    X_test_z = scaler.transform(X_test)        # Transform the test data using the same scaler
+    # scaler = StandardScaler()
+    # X_train_z = scaler.fit_transform(X_train)  # Fit the scaler on the training data and transform it
+    # X_test_z = scaler.transform(X_test)        # Transform the test data using the same scaler
 
-    y_pred=classify_without_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test)
+    #y_pred=classify_without_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test)
 
-    param_grid = {
-        "n_estimators": [50, 100, 150], #default : 100
-        "learning_rate": [0.01, 0.05, 0.1], #default : 0.1
-        "max_depth": [2, 3, 4], #default : 3
-    }
-    y_pred_HO=classify_with_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test,param_grid)
+    # param_grid = {
+    #     "n_estimators": [50, 100, 150], #default : 100
+    #     "learning_rate": [0.01, 0.05, 0.1], #default : 0.1
+    #     "max_depth": [2, 3, 4], #default : 3
+    # }
+   # y_pred_HO=classify_with_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test,param_grid)
     
     # 5) Performance evaluation
     # Assignement :  Evaluate the performance using a metric of your choice. 
@@ -361,21 +595,103 @@ def main():
     # Calculate mutual information between each feature and the target variable.
     # Mutual information is a measure of the dependency between variables.
     # A higher value indicates a stronger relationship.
-    y_pred_kbest, y_pred_kbest_HO=Kbest_feature_selection(X_train_z, X_test_z, y_train, y_test,param_grid)
+   # y_pred_kbest, y_pred_kbest_HO=Kbest_feature_selection(X_train_z, X_test_z, y_train, y_test,param_grid)
 
      #6)b) Second method : PCA
     # plot_pca(X_train_z) # plot to decide number of PCA components
     # result : we chose 10 components by lookint at the elbow of the curve
-    y_pred_pca, y_pred_pca_HO=PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid)
+    #y_pred_pca, y_pred_pca_HO=PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid)
     
     # Confusion matrices
-    plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca,  y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO)
+    #plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca,  y_pred_HO, y_pred_kbest_HO, y_pred_pca_HO)
+
+    ###Part 2: Multi-Subject Classification###
+    #extract data from all subjects
+    all_subjects = [] 
+    for i in range(1, 28):  # sujets 1 à 27
+        filename = f"dataset/s{i}/S{i}_A1_E1.mat"   # construit le chemin
+        data = sio.loadmat(filename)                # charge le fichier
+        all_subjects.append(data)                   # stocke dans la liste
+
+    emg_filtered_all = []
+    emg_continusous_env_all = []
+    emg_envelopes_cleaned_all = []
+    stimulus_all = []
+    repetition_all = []
+    datasets_all = []
+    labels_all = []
+    # 1) prepocessing for all subjects
+    for i in range(len(all_subjects)):
+        emg_raw_subject = all_subjects[i]['emg']
+        stimulus_subject = all_subjects[i]['restimulus']
+        repetition_subject = all_subjects[i]['rerepetition']
+        fs = 2000
+        #emg_filtered_all.append(bandpass_filter_emg(emg_raw_subject, fs))
+        #emg_continusous_env_all.append(preprocess_emg(emg_filtered_all[i], fs))
+        #emg_envelopes_cleaned_all.append(clean_emg_envelope(emg_filtered_all[i], emg_continusous_env_all[i],stimulus_subject,repetition_subject))
+        stimulus_all.append(stimulus_subject)
+        repetition_all.append(repetition_subject)
+        dataset_subject, labels_subject = build_dataset_with_features(emg_raw_subject,stimulus_subject,repetition_subject)
+        datasets_all.append(dataset_subject)
+        labels_all.append(labels_subject)
+       
+    #2) Extract features 
+    mean_matrix = Mean_all_features_one_chanel(datasets_all, n_channels=emg_raw_subject.shape[1], n_features=6)
+    plot_heatmaps_all_features(mean_matrix)
+
 
     
-
-
+    #3) Classification
+    #Subject 1 for TEST
+    # X_test = datasets_all[0]
+    # y_test = labels_all[0]
+    # # Subject 2 à 27 for TRAIN
+    # X_train = np.vstack(datasets_all[1:])   # concatène verticalement (tous samples)
+    # y_train = np.hstack(labels_all[1:])    
+    # # Normalizing the data
+    # # StandardScaler is used to scale the features so that they have a mean of 0 and a standard deviation of 1
+    # scaler = StandardScaler()
+    # X_train_z = scaler.fit_transform(X_train)  # Fit the scaler on the training data and transform it
+    # X_test_z = scaler.transform(X_test)        # Transform the test data using the same scaler
+    # y_pred=classify_without_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test)
+ 
+    # ##Seems to be worse than test and train on single subject only##
+    #4) Cross validation
+    # accuracy_scores_all = []
+    # f1_scores_all = []
+    # for i in range(len(datasets_all)):
+    #     X_test_cv = datasets_all[i]
+    #     y_test_cv = labels_all[i]
+    #     X_train_cv = np.vstack(datasets_all[:i] + datasets_all[i+1:])
+    #     y_train_cv = np.hstack(labels_all[:i] + labels_all[i+1:])
+    #     scaler_cv = StandardScaler()
+    #     X_train_cv_z = scaler_cv.fit_transform(X_train_cv)
+    #     X_test_cv_z = scaler_cv.transform(X_test_cv)
+    #     y_pred_cv=classify_without_hyperparameter_optimization(X_train_cv_z, X_test_cv_z, y_train_cv, y_test_cv)
+    #     print(f"Cross validation Subject {i+1} completed.")
+    #     accuracy_scores_all.append(accuracy_score(y_test_cv, y_pred_cv))
+    #     f1_scores_all.append(f1_score(y_test_cv, y_pred_cv, average='macro'))
     
+    # plot_cv_scores(accuracy_scores_all, f1_scores_all)
 
+    #5) Variying number of subjects in training set
+    # print("len datasets_all:", len(datasets_all))
+    # id_subject_for_training = [0,1,2]
+    # subject_for_testing = 26  # Subject 1 for testing
+
+    # datasets_training = [datasets_all[i] for i in id_subject_for_training]
+    # labels_training = [labels_all[i] for i in id_subject_for_training]
+    # X_train_varied = np.vstack(datasets_training)
+    # y_train_varied = np.hstack(labels_training)
+    # X_test_varied = datasets_all[subject_for_testing]
+    # y_test_varied = labels_all[subject_for_testing]
+    # scaler_varied = StandardScaler()
+    # X_train_varied_z = scaler_varied.fit_transform(X_train_varied)
+    # X_test_varied_z = scaler_varied.transform(X_test_varied)
+    # y_pred_varied=classify_without_hyperparameter_optimization(X_train_varied_z, X_test_varied_z, y_train_varied, y_test_varied)
+    # accuracy_score_varied = accuracy_score(y_test_varied, y_pred_varied)
+    # f1_score_varied = f1_score(y_test_varied, y_pred_varied, average='macro')
+    # print(f"Varied subjects training - Accuracy: {accuracy_score_varied:.3f}, F1 Score: {f1_score_varied:.3f}")
 
 
 if __name__ == "__main__":    main()
