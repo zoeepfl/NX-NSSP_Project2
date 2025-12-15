@@ -67,6 +67,8 @@ def build_dataset_from_ninapro(emg, stimulus, repetition, features=None):
     # Return the constructed dataset and corresponding labels
     return dataset, labels
 
+
+
 def get_ssc(x, threshold=0): #slope sign changes
     diff = np.diff(x, axis=0) # shape becomes (N-1, Channels)
     consecutive_prod = diff[:-1] * diff[1:]
@@ -442,3 +444,52 @@ def plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca, y_pred_HO, y_pred_kb
     # plt.show(block=False)
     # plt.pause(0.5)
     return
+
+
+def plot_emg_before_after(emg, fs, emg_filtered, channels=None):
+    """
+    Plot EMG avant et après filtrage pour plusieurs canaux.
+
+    Parameters
+    ----------
+    emg : ndarray (n_samples, n_channels)
+        Signal EMG brut
+    fs : float
+        Fréquence d'échantillonnage (Hz)
+    channels : list or None
+        Liste des canaux à afficher (ex: [0,1,2]).
+        Si None, affiche tous les canaux.
+    """
+
+    n_samples, n_channels = emg.shape
+
+    if channels is None:
+        channels = list(range(n_channels))
+
+    # Filtrage
+    #emg_filtered = bandpass_filter_emg(emg, fs)
+    #emg_filtered = emg_highpass_filter(emg,fs)
+    # Axe temporel
+    t = np.arange(n_samples) / fs
+
+    plt.figure(figsize=(12, 3 * len(channels)))
+
+    for i, ch in enumerate(channels):
+        plt.subplot(len(channels), 1, i + 1)
+
+        plt.plot(t, emg[:, ch], label="Brut", alpha=0.6)
+        plt.plot(t, emg_filtered[:, ch], label="Filtré", linewidth=1.5)
+
+        plt.ylabel(f"Canal {ch}")
+        plt.grid(True)
+
+        if i == 0:
+            plt.title("EMG avant et après filtrage")
+
+        if i == len(channels) - 1:
+            plt.xlabel("Temps (s)")
+
+        plt.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.show()

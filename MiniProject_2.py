@@ -57,6 +57,34 @@ def bandpass_filter_emg(emg, fs):
         emg_filtered = sosfiltfilt(sos, emg_filtered.T).T
     return emg_filtered   
 
+def emg_highpass_filter(emg, fs):
+    sos = butter(
+        N=2,
+        Wn=5,       # 5 Hz
+        fs=fs,
+        btype="highpass",
+        output="sos"
+    )
+    emg_filtered = sosfiltfilt(sos, emg.T).T
+
+    return emg_filtered
+
+# def bandpass_filter_emg(emg, fs):
+#     bandpass_cutoff_frequencies_Hz = (20, 45)
+
+#     sos = butter(
+#         N=4,
+#         Wn=bandpass_cutoff_frequencies_Hz,
+#         fs=fs,
+#         btype="bandpass",
+#         output="sos"
+#     )
+
+#     emg_filtered = sosfiltfilt(sos, emg.T).T
+#     return emg_filtered
+
+
+
 
 """    
 # 2. Rectify (Absolute value)
@@ -67,21 +95,59 @@ envelope_cutoff_Hz = 6
 sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
 emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
 """
-def preprocess_emg(emg_filtered, fs):
+def preprocess_emg(emg_filtered, fs, stimulus, repetition):
     # 1. Apply TKEO (The "Contrast Booster")
-    emg_tkeo = np.copy(emg_filtered)
-    emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
-    # (Note: The first and last samples remain 0 or raw, usually we ignore them)
+    # emg_tkeo = np.copy(emg_filtered)
+    # emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
+    # # (Note: The first and last samples remain 0 or raw, usually we ignore them)
 
-    # 2. Rectify the TKEO signal
-    emg_rectified = np.abs(emg_tkeo)
+    # # 2. Rectify the TKEO signal
+    # emg_rectified = np.abs(emg_tkeo)
 
-    # 3. Envelope (Standard Low-Pass)
-    # You might want to slightly increase the cutoff to 10Hz to catch the fast peaks
-    envelope_cutoff_Hz = 10 
-    sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
-    emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
-    return emg_continuous_env
+    # # 3. Envelope (Standard Low-Pass)
+    # # You might want to slightly increase the cutoff to 10Hz to catch the fast peaks
+    # envelope_cutoff_Hz = 10 
+    # sos_env = butter(N=4, Wn=envelope_cutoff_Hz, fs=fs, btype="low", output="sos")
+    # emg_continuous_env = sosfiltfilt(sos_env, emg_rectified.T).T
+
+
+    n_stimuli = len(np.unique(stimulus)) - 1 
+    n_repetitions = len(np.unique(repetition)) - 1 
+
+    # Initializing the data structure
+    emg_windows = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)] 
+    emg_envelopes = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)]
+
+    for stimuli_idx in range(n_stimuli):
+        for repetition_idx in range(n_repetitions):
+            idx = np.logical_and(stimulus == stimuli_idx + 1, repetition == repetition_idx + 1).flatten()
+            emg_windows[stimuli_idx][repetition_idx] = emg_filtered[idx, :]
+            #emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
+
+    #ch_idx = 1
+    #plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
+
+    #----------------------------------------------------------------------------------------
+
+    #emg_envelopes_cleaned = clean_and_reject_trials(emg_envelopes, fs=2000, trim_ms=0, threshold=3)
+
+    # emg_envelopes_cleaned = clean_and_reject_trials_hard_limit(
+    #     emg_envelopes, 
+    #     fs=2000, 
+    #     trim_ms=0, 
+    #     threshold=3, 
+    #     absolute_max=0.006
+    # )
+    return emg_windows
+
+'''
+# --- Visualization of Rejection ---
+plot_rejection_results(
+    emg_original=emg_envelopes, 
+    emg_cleaned=emg_envelopes_cleaned, 
+    fs=2000, 
+    trim_s=0.2
+)'''
 
 '''
 plot_time_domain_check(
@@ -97,45 +163,6 @@ plot_time_domain_check(
 # =================================================================
 # PART 2: Segmentation
 # =================================================================
-def clean_emg_envelope(emg_filtered, emg_continuous_env,stimulus, repetition):
-
-    n_stimuli = len(np.unique(stimulus)) - 1 
-    n_repetitions = len(np.unique(repetition)) - 1 
-
-    # Initializing the data structure
-    emg_windows = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)] 
-    emg_envelopes = [[None for repetition_idx in range(n_repetitions)] for stimuli_idx in range(n_stimuli)]
-
-    for stimuli_idx in range(n_stimuli):
-        for repetition_idx in range(n_repetitions):
-            idx = np.logical_and(stimulus == stimuli_idx + 1, repetition == repetition_idx + 1).flatten()
-            emg_windows[stimuli_idx][repetition_idx] = emg_filtered[idx, :]
-            emg_envelopes[stimuli_idx][repetition_idx] = emg_continuous_env[idx, :]
-            
-    ch_idx = 1
-    #plot_spectral_check(emg, emg_filtered, ch_idx, fs=2000)
-
-    #----------------------------------------------------------------------------------------
-
-    #emg_envelopes_cleaned = clean_and_reject_trials(emg_envelopes, fs=2000, trim_ms=0, threshold=3)
-
-    emg_envelopes_cleaned = clean_and_reject_trials_hard_limit(
-        emg_envelopes, 
-        fs=2000, 
-        trim_ms=0, 
-        threshold=3, 
-        absolute_max=0.006
-    )
-    return emg_envelopes_cleaned
-
-'''
-# --- Visualization of Rejection ---
-plot_rejection_results(
-    emg_original=emg_envelopes, 
-    emg_cleaned=emg_envelopes_cleaned, 
-    fs=2000, 
-    trim_s=0.2
-)'''
 
 
 def build_dataset_with_features(emg,stimulus,repetition):
@@ -516,8 +543,8 @@ def plot_cv_scores(accuracy_scores, f1_scores):
     # --- Plot Accuracy ---
     plt.subplot(2, 1, 1)
     plt.plot(subjects, accuracy_scores, marker='o')
-    plt.title("Accuracy per Subject")
-    plt.xlabel("Subject")
+    plt.title("Accuracy ")
+    plt.xlabel("Nb of suject for trainning")
     plt.ylabel("Accuracy")
     plt.grid(True)
     plt.xticks(subjects)
@@ -525,8 +552,8 @@ def plot_cv_scores(accuracy_scores, f1_scores):
     # --- Plot F1 Score ---
     plt.subplot(2, 1, 2)
     plt.plot(subjects, f1_scores, marker='o')
-    plt.title("F1 Score per Subject")
-    plt.xlabel("Subject")
+    plt.title("F1 Score")
+    plt.xlabel("Nb of suject for trainning")
     plt.ylabel("F1 Score")
     plt.grid(True)
     plt.xticks(subjects)
@@ -543,16 +570,17 @@ def plot_cv_scores(accuracy_scores, f1_scores):
 def main():
     ####PART 1: Single subject Classification####
     # Load data
+    fs_1 = 100
+
     S2_A1_E1 = sio.loadmat('dataset/s2/S2_A1_E1.mat')
     stimulus = S2_A1_E1['restimulus']
     repetition = S2_A1_E1['rerepetition']
     emg_raw = S2_A1_E1['emg']
-    fs = 2000
 
+   
     #1) Preprocessing
-    # emg_filtered = bandpass_filter_emg(emg_raw, fs)
-    # emg_continusous_env= preprocess_emg(emg_filtered, fs)
-    # emg_envelopes_cleaned = clean_emg_envelope(emg_filtered, emg_continusous_env,stimulus,repetition)
+    #emg_filtered = bandpass_filter_emg(emg_raw,  fs)
+    #emg_windows, emg_envelopes_cleaned= preprocess_emg(emg_filtered, fs, stimulus, repetition)
 
 
 
@@ -614,8 +642,7 @@ def main():
         all_subjects.append(data)                   # stocke dans la liste
 
     emg_filtered_all = []
-    emg_continusous_env_all = []
-    emg_envelopes_cleaned_all = []
+    emg_windows_all = []
     stimulus_all = []
     repetition_all = []
     datasets_all = []
@@ -625,9 +652,10 @@ def main():
         emg_raw_subject = all_subjects[i]['emg']
         stimulus_subject = all_subjects[i]['restimulus']
         repetition_subject = all_subjects[i]['rerepetition']
-        fs = 2000
-        #emg_filtered_all.append(bandpass_filter_emg(emg_raw_subject, fs))
-        #emg_continusous_env_all.append(preprocess_emg(emg_filtered_all[i], fs))
+        fs_1 = 100 #sampling frequency 100hz
+        #No preprocessing step as 
+        #emg_filtered_all.append(emg_highpass_filter(emg_raw_subject, fs_1))
+        #emg_windows_all.append(preprocess_emg(emg_filtered_all[i], fs_1,stimulus_subject,repetition_subject))
         #emg_envelopes_cleaned_all.append(clean_emg_envelope(emg_filtered_all[i], emg_continusous_env_all[i],stimulus_subject,repetition_subject))
         stimulus_all.append(stimulus_subject)
         repetition_all.append(repetition_subject)
@@ -635,9 +663,9 @@ def main():
         datasets_all.append(dataset_subject)
         labels_all.append(labels_subject)
        
-    #2) Extract features 
-    mean_matrix = Mean_all_features_one_chanel(datasets_all, n_channels=emg_raw_subject.shape[1], n_features=6)
-    plot_heatmaps_all_features(mean_matrix)
+    # # #2) Extract features 
+    # mean_matrix = Mean_all_features_one_chanel(datasets_all, n_channels=emg_raw_subject.shape[1], n_features=6)
+    # plot_heatmaps_all_features(mean_matrix)
 
 
     
@@ -675,23 +703,34 @@ def main():
     # plot_cv_scores(accuracy_scores_all, f1_scores_all)
 
     #5) Variying number of subjects in training set
-    # print("len datasets_all:", len(datasets_all))
-    # id_subject_for_training = [0,1,2]
-    # subject_for_testing = 26  # Subject 1 for testing
+    #print("len datasets_all:", len(datasets_all))
+    id_subject_for_training = []
+    id_subject_for_training.append(0)
+    accuracy_score_varied_all=[]
+    f1_score__varied_all=[]
+   
+    subject_for_testing = 26  # Subject 1 for testing
+    for i in range(20):
+        datasets_training = [datasets_all[i] for i in id_subject_for_training]
+        print(len(datasets_training))
+        labels_training = [labels_all[i] for i in id_subject_for_training]
+        X_train_varied = np.vstack(datasets_training)
+        y_train_varied = np.hstack(labels_training)
+        X_test_varied = datasets_all[subject_for_testing]
+        y_test_varied = labels_all[subject_for_testing]
+        scaler_varied = StandardScaler()
+        X_train_varied_z = scaler_varied.fit_transform(X_train_varied)
+        X_test_varied_z = scaler_varied.transform(X_test_varied)
+        y_pred_varied=classify_without_hyperparameter_optimization(X_train_varied_z, X_test_varied_z, y_train_varied, y_test_varied)
+        accuracy_score_varied = accuracy_score(y_test_varied, y_pred_varied)
+        accuracy_score_varied_all.append(accuracy_score_varied)
+        f1_score_varied = f1_score(y_test_varied, y_pred_varied, average='macro')
+        f1_score__varied_all.append(f1_score_varied)
+        print(f"Varied subjects training - Accuracy: {accuracy_score_varied:.3f}, F1 Score: {f1_score_varied:.3f}")
+        id_subject_for_training.append(i)
 
-    # datasets_training = [datasets_all[i] for i in id_subject_for_training]
-    # labels_training = [labels_all[i] for i in id_subject_for_training]
-    # X_train_varied = np.vstack(datasets_training)
-    # y_train_varied = np.hstack(labels_training)
-    # X_test_varied = datasets_all[subject_for_testing]
-    # y_test_varied = labels_all[subject_for_testing]
-    # scaler_varied = StandardScaler()
-    # X_train_varied_z = scaler_varied.fit_transform(X_train_varied)
-    # X_test_varied_z = scaler_varied.transform(X_test_varied)
-    # y_pred_varied=classify_without_hyperparameter_optimization(X_train_varied_z, X_test_varied_z, y_train_varied, y_test_varied)
-    # accuracy_score_varied = accuracy_score(y_test_varied, y_pred_varied)
-    # f1_score_varied = f1_score(y_test_varied, y_pred_varied, average='macro')
-    # print(f"Varied subjects training - Accuracy: {accuracy_score_varied:.3f}, F1 Score: {f1_score_varied:.3f}")
+    plot_cv_scores(f1_score__varied_all, f1_score__varied_all)
+
 
 
 if __name__ == "__main__":    main()
