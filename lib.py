@@ -442,3 +442,43 @@ def plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca, y_pred_HO, y_pred_kb
     # plt.show(block=False)
     # plt.pause(0.5)
     return
+
+# This function is used to cut the time windows from the raw EMG 
+# # It return a lists containing the EMG of each time window. 
+# # It also returns the target corresponding to the time of the end of the window 
+def extract_time_windows_regression(EMG: np.ndarray, Label: np.ndarray, fs: int, win_len: int, step: int): 
+    """This function is defined to perform an overlapping sliding window 
+    :param EMG: Numpy array containing the data 
+    :param Label: Numpy array containing the targets 
+    :param fs: the sampling frequency of the signal 
+    :param win_len: The size of the windows (in seconds) 
+    :param step: The step size between windows (in seconds) 
+    :return: A Numpy array containing the windows 
+    :return: A Numpy array containing the targets aligned for each window 
+    :note: The lengths of both outputs are the same 
+    """ 
+    n,m = EMG.shape 
+    win_len = int(win_len*fs) 
+    start_points = np.arange(0,n-win_len,int(step*fs)) 
+    end_points = start_points + win_len 
+
+    EMG_windows = np.zeros((len(start_points),win_len,m)) 
+    Labels_window = np.zeros((len(start_points),win_len,Label.shape[1])) 
+    for i in range(len(start_points)): 
+        EMG_windows[i,:,:] = EMG[start_points[i]:end_points[i],:] 
+        Labels_window[i,:,:] = Label[start_points[i]:end_points[i],:] 
+    return EMG_windows, Labels_window 
+
+def extract_features(EMG_windows: np.ndarray, Labels_windows: np.ndarray): 
+    """ This function is defined to extract the mean and standard deviation of each window 
+    :param EMG_windows: A Numpy array containing the windows 
+    :return: A Numpy array containing the mean, the standard deviation and the maximum amplitude of each window and the mean of the labels window 
+    """ 
+    # along axis 1, which is the time axis 
+    EMG_mean = np.mean(EMG_windows,axis=1) 
+    EMG_std = np.std(EMG_windows,axis=1) 
+    EMG_max_amplitude = np.max(EMG_windows, axis=1) 
+    Labels_mean = np.mean(Labels_windows,axis=1) 
+    # Concatenate the mean and std of each window 
+    EMG_extracted_features = np.concatenate((EMG_mean, EMG_std, EMG_max_amplitude), axis=1) 
+    return EMG_extracted_features, Labels_mean 
