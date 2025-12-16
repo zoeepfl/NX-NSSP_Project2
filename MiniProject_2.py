@@ -41,6 +41,14 @@ def main():
     #3) Dataset building with feature extraction
     print("Build dataset with feature")
     dataset, labels = build_dataset_with_features(emg_windows)
+    
+    plot_consistency_mav_wl(
+    dataset=dataset, 
+    labels=labels, 
+    feature_indices=[0, 4], # 0 for MAV, 4 for WL
+    n_channels=10, 
+    channel_to_plot=1
+    )
 
     #2) Split the dataset into training and testing sets
     # Here, 30% of the data is reserved for testing, and 70% is used for training

@@ -306,6 +306,79 @@ def build_dataset_with_features(emg_windows):
         )
     return dataset, labels
 
+def plot_consistency_mav_wl(dataset, labels, feature_indices=[0, 4], n_channels=10, channel_to_plot=0):
+    """
+    Plots the consistency of repetitions for MAV and another feature (e.g., WL).
+    Superimposes all movements on the same plot (X=Repetition, Y=Value).
+    
+    Parameters:
+    - dataset: The features matrix (n_samples, n_features_total)
+    - labels: The movement labels
+    - feature_indices: List of 2 integers. 
+                       Default [0, 4] assumes: 0=MAV, 4=WL (based on your list order).
+    """
+    
+    # 1. Feature Names (for the plot title)
+    feat_names = {0: 'MAV', 1: 'Max', 2: 'Std', 3: 'RMS', 4: 'Waveform Length (WL)'}
+    
+    f1_idx = feature_indices[0]
+    f2_idx = feature_indices[1]
+    
+    name1 = feat_names.get(f1_idx, f'Feature {f1_idx}')
+    name2 = feat_names.get(f2_idx, f'Feature {f2_idx}')
+    
+    # 2. Reorganize Data for Plotting
+    # We need to extract the specific columns for the chosen channel
+    # Column Index = (Feature_Index * n_channels) + Channel_Index
+    
+    data_rows = []
+    n_samples = dataset.shape[0]
+    
+    # Assuming standard order: [Feat1_Ch1, Feat1_Ch2... Feat2_Ch1...]
+    col_idx_1 = (f1_idx * n_channels) + channel_to_plot
+    col_idx_2 = (f2_idx * n_channels) + channel_to_plot
+    
+    for i in range(n_samples):
+        # Determine Repetition ID (Assuming data is ordered: 10 reps per mvt)
+        # Or calculated from index if labels are sorted
+        # Ideally, we should pass the 'repetition' array, but here we estimate:
+        rep_id = (i % 10) + 1 
+        
+        mvt_label = labels[i]
+        
+        data_rows.append({
+            'Movement': str(int(mvt_label)), # String for categorical coloring
+            'Repetition': rep_id,
+            name1: dataset[i, col_idx_1],
+            name2: dataset[i, col_idx_2]
+        })
+        
+    df = pd.DataFrame(data_rows)
+    
+    # 3. Create the Plots
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # --- Plot 1: MAV Consistency ---
+    sns.lineplot(data=df, x='Repetition', y=name1, hue='Movement', 
+                 marker='o', palette='tab20', ax=axes[0])
+    axes[0].set_title(f'Consistency of {name1} (Channel {channel_to_plot+1})')
+    axes[0].set_ylabel(f'{name1} Value')
+    axes[0].set_xlabel('Repetition (1-10)')
+    axes[0].grid(True, alpha=0.3)
+    axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left', title='Movement')
+
+    # --- Plot 2: WL Consistency ---
+    sns.lineplot(data=df, x='Repetition', y=name2, hue='Movement', 
+                 marker='o', palette='tab20', ax=axes[1])
+    axes[1].set_title(f'Consistency of {name2} (Channel {channel_to_plot+1})')
+    axes[1].set_ylabel(f'{name2} Value')
+    axes[1].set_xlabel('Repetition (1-10)')
+    axes[1].grid(True, alpha=0.3)
+    axes[1].legend().remove()
+    
+    plt.tight_layout()
+    plt.show()
+
 # =================================================================
 
 # 4) Classification    
