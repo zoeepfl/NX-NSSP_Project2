@@ -164,7 +164,7 @@ def plot_global_psd_check(data, fs, nperseg=1024):
     plt.show()
 
 def plot_pca(X_train_z) :
-    # Fit PCA with ALL components
+    # Fit PCA with all components
     pca_full = PCA().fit(X_train_z)
 
     # Explained variance
@@ -216,8 +216,6 @@ def plot_conf_mat(y_test, y_pred, y_pred_kbest, y_pred_pca, y_pred_HO, y_pred_kb
 
     plt.subplots_adjust(hspace=0.35, wspace=0.25)
     plt.show()
-    # plt.show(block=False)
-    # plt.pause(0.5)
     return
 
 
@@ -409,26 +407,25 @@ def classify_with_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_te
     return y_pred_HO
 
 def Kbest_feature_selection(X_train_z, X_test_z, y_train, y_test,param_grid):
-    # Select the top 10 features based on mutual information scores.
-    # Note: You can change 'k' to 30 if you are working with more features.
+    # Select the top 10 features based on mutual information scores
     k_best = SelectKBest(mutual_info_classif, k=10)
     k_best.fit(X_train_z, y_train)
 
-    # Transform the training and test datasets to only include the selected features.
+    # Transform the training and test datasets to only include the selected features
     X_train_best = k_best.transform(X_train_z)
     X_test_best = k_best.transform(X_test_z)
 
     clf_kbest = GradientBoostingClassifier()
     clf_kbest.fit(X_train_best, y_train)
 
-    # Predict the labels for the test set using the trained model.
+    # Predict the labels for the test set
     y_pred_kbest = clf_kbest.predict(X_test_best)
 
     # Performance metrics
     print_metrics(y_test, y_pred_kbest, "GB with kbest")
 
     #------
-    # Select k-best with hyperparameter optimization
+    # With select k-best and hyperparameter optimization
 
     grid_kbest = GridSearchCV(
         GradientBoostingClassifier(),
@@ -444,7 +441,6 @@ def Kbest_feature_selection(X_train_z, X_test_z, y_train, y_test,param_grid):
 
 def PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid):
     pca = PCA(n_components=10) #10 components : chosen with the elbow method
-    # pca.fit(X_train_z, y_train)
     pca.fit(X_train_z)
 
     X_train_pca = pca.transform(X_train_z)
@@ -460,7 +456,7 @@ def PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid):
     print_metrics(y_test, y_pred_pca, "GB with PCA")
 
     #--------
-    # PCA with hyperparameter optimization
+    # with PCA and hyperparameter optimization
     grid_pca = GridSearchCV(
         GradientBoostingClassifier(),
         param_grid,
