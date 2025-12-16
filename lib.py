@@ -20,6 +20,8 @@ from sklearn.feature_selection import SelectKBest
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from statsmodels.regression.linear_model import yule_walker
+from matplotlib.gridspec import GridSpec 
+
 
 import seaborn as sns
 
@@ -263,6 +265,210 @@ def plot_emg_before_after(emg, fs, emg_filtered, channels=None):
             plt.xlabel("Temps (s)")
 
         plt.legend(loc="upper right")
+
+    plt.tight_layout()
+    plt.show()
+
+
+# =================================================================
+# Segmentation
+
+def create_emg_windows(stimulus,repetition,emg):
+    n_stimuli = len(np.unique(stimulus)) - 1 
+    n_repetitions = len(np.unique(repetition)) - 1 
+    # Initialisation
+    emg_windows = [[None for r in range(n_repetitions)] for s in range(n_stimuli)] 
+
+    for s in range(n_stimuli):
+        for r in range(n_repetitions):
+            idx = np.logical_and(stimulus == s + 1, repetition == r + 1).flatten()
+            emg_windows[s][r] = emg[idx, :]
+
+    return emg_windows
+
+
+# =================================================================
+# Features
+def build_dataset_with_features(emg_windows):
+
+    emg_features = [
+        lambda x: np.mean(x, axis=0),             # MAV 
+        lambda x: np.max(x, axis=0),              # Peak Amplitude
+        lambda x: np.std(x, axis=0),              # Standard Deviation
+        lambda x: np.sqrt(np.mean(x**2, axis=0)), # RMS
+        lambda x: np.sum(np.abs(np.diff(x, axis=0)), axis=0) # Waveform Length
+    ]
+
+    # Building dataset
+    dataset, labels = build_dataset(
+        emg_windows=emg_windows,
+        features=emg_features
+        )
+    return dataset, labels
+
+# =================================================================
+
+# 4) Classification    
+def classify_without_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test):
+    # Train a classifier on the normalized data
+    clf = GradientBoostingClassifier()
+    clf.fit(X_train_z, y_train)  # Fit the model on the training data
+    # Predict the labels for the test set
+    y_pred = clf.predict(X_test_z)
+    # Performance metrics
+    print_metrics(y_test, y_pred, "GB without hyperparameter optimization")
+    return y_pred
+
+#----------------------------------
+# Hyperparameter optimization
+def classify_with_hyperparameter_optimization(X_train_z, X_test_z, y_train, y_test,param_grid):
+   
+    grid = GridSearchCV(GradientBoostingClassifier(), param_grid, cv=3, n_jobs=-1) #3 folds cross validation
+    grid.fit(X_train_z, y_train)
+
+    # print(f"Best estimator: {grid.best_estimator_}")
+    # print(f"Best hyperparameters: {grid.best_params_}")
+
+    y_pred_HO = grid.predict(X_test_z)
+
+    # Performance metrics
+    print_metrics(y_test, y_pred_HO, "GB with hyperparameter optimization")
+    return y_pred_HO
+
+def Kbest_feature_selection(X_train_z, X_test_z, y_train, y_test,param_grid):
+    # Select the top 10 features based on mutual information scores.
+    # Note: You can change 'k' to 30 if you are working with more features.
+    k_best = SelectKBest(mutual_info_classif, k=10)
+    k_best.fit(X_train_z, y_train)
+
+    # Transform the training and test datasets to only include the selected features.
+    X_train_best = k_best.transform(X_train_z)
+    X_test_best = k_best.transform(X_test_z)
+
+    clf_kbest = GradientBoostingClassifier()
+    clf_kbest.fit(X_train_best, y_train)
+
+    # Predict the labels for the test set using the trained model.
+    y_pred_kbest = clf_kbest.predict(X_test_best)
+
+    # Performance metrics
+    print_metrics(y_test, y_pred_kbest, "GB with kbest")
+
+    #------
+    # Select k-best with hyperparameter optimization
+
+    grid_kbest = GridSearchCV(
+        GradientBoostingClassifier(),
+        param_grid,
+        cv=3,
+        n_jobs=-1
+    )
+    grid_kbest.fit(X_train_best, y_train)
+    y_pred_kbest_HO = grid_kbest.predict(X_test_best)
+    print_metrics(y_test, y_pred_kbest_HO, "GB with kbest with hyperparameter optimization")
+    return y_pred_kbest, y_pred_kbest_HO
+
+
+def PCA_feature_reduction(X_train_z, X_test_z, y_train, y_test,param_grid):
+    pca = PCA(n_components=10) #10 components : chosen with the elbow method
+    # pca.fit(X_train_z, y_train)
+    pca.fit(X_train_z)
+
+    X_train_pca = pca.transform(X_train_z)
+    X_test_pca = pca.transform(X_test_z)
+
+    # Train Gradient Boosting on PCA-reduced features
+    clf_pca = GradientBoostingClassifier()
+    clf_pca.fit(X_train_pca, y_train)
+
+    y_pred_pca = clf_pca.predict(X_test_pca)
+
+    # Performance metrics
+    print_metrics(y_test, y_pred_pca, "GB with PCA")
+
+    #--------
+    # PCA with hyperparameter optimization
+    grid_pca = GridSearchCV(
+        GradientBoostingClassifier(),
+        param_grid,
+        cv=3,
+        n_jobs=-1
+    )
+    grid_pca.fit(X_train_pca, y_train)
+    y_pred_pca_HO = grid_pca.predict(X_test_pca)
+    print_metrics(y_test, y_pred_pca_HO, "GB with PCA with hyperparameter optimization")
+    return y_pred_pca, y_pred_pca_HO
+
+def Mean_all_features_one_chanel(datasets_all, n_channels=10, n_features=5, feature_names=None):
+   
+    n_subjects = len(datasets_all)
+
+    # Matrice features × subjects
+    mean_matrix = np.zeros((n_features, n_subjects))
+
+    for f in range(n_features):
+        for s, dataset in enumerate(datasets_all):
+            start = f * n_channels
+            ch1_index = start + 0         
+            mean_matrix[f, s] = np.mean(dataset[:, ch1_index])
+    return mean_matrix
+
+
+def plot_heatmaps_all_features(mean_matrix, n_channels=10, n_features=5, feature_names=None):
+    if feature_names is None:
+        feature_names = ["MAV", "STD", "MAX", "RMS", "WL"]
+
+    fig = plt.figure(figsize=(14, 2.3 * n_features))
+    gs = GridSpec(n_features, 1, figure=fig, hspace=0.55)   
+    n_subjects = mean_matrix.shape[1]
+    axes = []
+    for f in range(n_features):
+        ax = fig.add_subplot(gs[f, 0])
+        axes.append(ax)
+        
+        heat_data = mean_matrix[f][np.newaxis, :]          
+        im = ax.imshow(heat_data, aspect='auto', cmap='viridis')
+
+        ax.set_yticks([0])
+        ax.set_yticklabels([feature_names[f]])
+
+        ax.set_title(f"Feature : {feature_names[f]} (Canal 1)", pad=12, fontsize=10)
+
+        if f < n_features - 1:
+            ax.set_xticks([])
+
+    axes[-1].set_xticks(range(n_subjects))
+    axes[-1].set_xticklabels([str(i+1) for i in range(n_subjects)], rotation=45)
+    axes[-1].set_xlabel("Subject")
+
+    cbar = fig.colorbar(im, ax=axes, orientation='vertical', fraction=0.03, pad=0.02)
+    cbar.set_label("Mean value", rotation=90)
+
+    plt.show()
+
+
+def plot_cv_scores(accuracy_scores, f1_scores):
+    subjects = np.arange(1, len(accuracy_scores) + 1)
+
+    plt.figure(figsize=(12, 8))
+
+    # --- Plot Accuracy ---
+    plt.subplot(2, 1, 1)
+    plt.plot(subjects, accuracy_scores, marker='o')
+    plt.title("Accuracy ")
+    plt.xlabel("Nb of suject for trainning")
+    plt.ylabel("Accuracy")
+    plt.grid(True)
+    plt.xticks(subjects)
+
+    # --- Plot F1 Score ---
+    plt.subplot(2, 1, 2)
+    plt.plot(subjects, f1_scores, marker='o')
+    plt.title("F1 Score")
+    plt.xlabel("Nb of suject for trainning")
+    plt.ylabel("F1 Score")
+    plt.grid(True)
+    plt.xticks(subjects)
 
     plt.tight_layout()
     plt.show()
