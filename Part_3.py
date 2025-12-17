@@ -29,14 +29,10 @@ from lib import *
 
 # Load data part 3
 S1_E1_A1 = sio.loadmat('S1_E1_A1.mat')
-#print(f"data structure is:{type(S1_E1_A1)}")                  ### represents class  --->  <class 'dict'>
-#print(f"keys:{[key for key in S1_E1_A1.keys()]}")             ### gives categories---> ['__header__', '__version__', '__globals__', 'subject', 'exercise', 'emg', 'acc', 'gyro', 'mag', 'glove', 'stimulus', 'repetition', 'restimulus', 'rerepetition']
 
 fs = 2000
 
 emg = S1_E1_A1['emg']
-#print(emg_P3.shape)                                           ### dim -> (2292526, 16)
-
 subject = S1_E1_A1['subject']                                  ### dim -> (1, 1)
 exercise = S1_E1_A1['exercise']                                ### dim -> (1, 1)
 acc = S1_E1_A1['acc']                                          ### dim -> (2292526, 48)
@@ -48,9 +44,6 @@ repetition = S1_E1_A1['repetition']                            ### dim -> (22925
 restimulus = S1_E1_A1['restimulus']                            ### dim -> (2292526, 1)
 rerepetition = S1_E1_A1['rerepetition']                        ### dim -> (2292526, 1)
 
-#print(f"The shapes are:\n subject : {subject.shape} \n exercise : {exercise.shape} \n acc : {acc.shape} \n gyro : {gyro.shape} \n mag : {mag.shape} \n glove : {glove.shape} \n stimulus : {stimulus.shape} \n repetition : {repetition.shape} \n restimulus : {restimulus.shape} \n rerepetition : {rerepetition.shape}")
-
-
 # GLOVE TREATEMENT
 joint_channels = [3, 6, 8, 11, 14]
 glove_new = glove[:, joint_channels]
@@ -60,39 +53,6 @@ n_timepoints, n_channels = glove_new.shape
 n_channels_emg = emg.shape[1]
 
 time_steps = np.arange(0, n_timepoints/fs, 1/fs)
-
-#This proves that the code needs rectification
-#t, c = np.where(glove < 0)
-#print(f"Valeur en dessous de 0 pour {c} at {t}")
-
-#--------------------------------------------------------------------------
-# PLOTS FOR ORIGINAL SIGNALS
-# fig1, ax1 = plt.subplots()
-# ax1.plot(emg[:,5])
-# ax1.set_xlabel("Time [s]")
-# ax1.set_ylabel("Signal [uV]")
-# plt.show()
-
-# fig, ax = plt.subplots(n_channels, 1, constrained_layout=True, figsize=(10,5))
-# for i, ch in enumerate(joint_channels):
-#     ax[i].plot(time_steps, glove[:,ch])
-#     ax[i].set_xlabel("Time [s]")
-#     ax[i].set_ylabel(f"Signal {ch} [uV]")
-# plt.show()
-
-#--------------------------------------------------------------------------
-#(OPTIONAL GLOVE FILTERING)
-# For a glove signal we do not need all that filtering 
-#lowpass_cutoff = 5  # Hz
-#sos = butter(N=4, Wn=lowpass_cutoff, fs=fs, btype="lowpass", output="sos")
-#glove_filtered = sosfiltfilt(sos, glove_new, axis=0)
-
-#fig2, ax2 = plt.subplots(n_channels, 1, constrained_layout=True, figsize=(10,5))
-#for i, ch in enumerate(joint_channels):
-#    ax2[i].plot(time_steps, glove_filtered[:,i])
-#    ax2[i].set_xlabel("Time [s]")
-#    ax2[i].set_ylabel(f"Signal {ch} [uV]")
-#plt.show()
 
 ################################################
 # PREPROCESSING
@@ -114,11 +74,6 @@ emg_tkeo[1:-1] = emg_filtered[1:-1]**2 - emg_filtered[:-2] * emg_filtered[2:]
 # 2. Rectify the signal
 emg_rectified = np.abs(emg_tkeo)
 ################################################
-# fig1, ax1 = plt.subplots()
-# ax1.plot(emg_rectified[:,5])
-# ax1.set_xlabel("Time [s]")
-# ax1.set_ylabel("Signal [uV]")
-# plt.show()
 
 # Moving mean to have the spectrum of the envelope signal
 mov_mean_size = 200 
