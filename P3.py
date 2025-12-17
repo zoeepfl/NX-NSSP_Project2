@@ -188,6 +188,72 @@ print("EMG train extracted features shape: {}, Finger labels feature shape:{}".f
 print("EMG validation extracted features shape: {}, Finger labels feature shape:{}".format(EMG_val_extracted_features.shape, Labels_val_mean.shape)) 
 print("EMG test extracted features shape: {}, Finger labels feature shape:{}".format(EMG_test_extracted_features.shape, Labels_test_mean.shape))
 
+
+# ==============================================================================
+# DIAGNOSTIC TEST: SHUFFLED SPLIT
+# ==============================================================================
+
+print("\n" + "="*50)
+print(">>> STARTING DIAGNOSTIC TEST: SHUFFLED SPLIT")
+print("Goal: Check if model works when training data is randomized.")
+
+# 1. Concatenate all available data (train + val + test)
+# Merge everything to redistribute it randomly
+X_total = np.concatenate([
+    EMG_train_extracted_features, 
+    EMG_val_extracted_features, 
+    EMG_test_extracted_features
+], axis=0)
+
+Y_total = np.concatenate([
+    Labels_train_mean, 
+    Labels_val_mean, 
+    Labels_test_mean
+], axis=0)
+
+# 2. Random split (Shuffle=True)
+# Keep the same ratio (approx 15% for testing)
+from sklearn.model_selection import train_test_split
+X_train_shuf, X_test_shuf, Y_train_shuf, Y_test_shuf = train_test_split(
+    X_total, Y_total, test_size=0.15, random_state=42, shuffle=True # delete random_state=42 to get a random set of values
+)
+
+# 3. New normalization
+scaler_shuf = StandardScaler()
+X_train_z_shuf = scaler_shuf.fit_transform(X_train_shuf)
+X_test_z_shuf  = scaler_shuf.transform(X_test_shuf)
+
+# 4. Train and evaluate on shuffled data
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_squared_error
+
+finger_names_diag = ["J3", "J6", "J8", "J11", "J14"]
+print(f"Training on {X_train_z_shuf.shape[0]} samples, Testing on {X_test_z_shuf.shape[0]} samples (Randomized)...")
+
+for f in range(Y_total.shape[1]):
+    # Train a temporary regressor
+    gbr_diag = GradientBoostingRegressor(
+        n_estimators=200, 
+        learning_rate=0.05, 
+        max_depth=3, 
+        random_state=0
+    )
+    gbr_diag.fit(X_train_z_shuf, Y_train_shuf[:, f])
+    
+    # Predict
+    y_pred_diag = gbr_diag.predict(X_test_z_shuf)
+    
+    # Calculate metrics
+    rmse_diag = np.sqrt(mean_squared_error(Y_test_shuf[:, f], y_pred_diag))
+    r2_diag = r2_score(Y_test_shuf[:, f], y_pred_diag)
+    
+    print(f"  -> Finger {finger_names_diag[f]}: R² = {r2_diag:.2f} (RMSE = {rmse_diag:.2f})")
+
+print(">>> END OF DIAGNOSTIC TEST")
+print("="*50 + "\n")
+# ==============================================================================
+
+
 scaler = StandardScaler()
 X_train_z = scaler.fit_transform(EMG_train_extracted_features)
 X_val_z   = scaler.transform(EMG_val_extracted_features)
@@ -199,3 +265,85 @@ plt.figure(figsize=(10, 8))
 sns.heatmap(corr, cmap="coolwarm", center=0, square=True)
 plt.title("Feature correlation (z-scored, train set)")
 plt.show()
+
+# ------------------------------------------------------------------------------
+# 4. Gradient boosting regression ----------------
+print (">>> STARTING REGRESSION")
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+
+# Train one regressor per finger angle
+n_fingers = Labels_train_mean.shape[1]
+
+models = []
+Y_test_pred = np.zeros_like(Labels_test_mean)
+
+for f in range(n_fingers):
+    gbr = GradientBoostingRegressor(
+        n_estimators=200,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=0
+    )
+    gbr.fit(X_train_z, Labels_train_mean[:, f])
+    Y_test_pred[:, f] = gbr.predict(X_test_z) # Prediction
+
+    # Smoothing process --------------------------
+    window_size = 15 
+    weights = np.ones(window_size) / window_size
+    pred_smooth = np.convolve(Y_test_pred[:, f], weights, mode='same')
+    
+    Y_test_pred[:, f] = pred_smooth # Replace old value
+    # --------------------------------------------
+
+    models.append(gbr)
+
+# 4. Visualization -------------------------------
+finger_names = ["J3", "J6", "J8", "J11", "J14"]
+
+plt.figure(figsize=(14, 8))
+for f in range(n_fingers):
+    plt.subplot(3, 2, f + 1)
+    plt.plot(Labels_test_mean[:, f], label="True", alpha=0.8)
+    plt.plot(Y_test_pred[:, f], label="Predicted", alpha=0.8)
+    plt.title(f"Finger angle {finger_names[f]}")
+    plt.xlabel("Window index")
+    plt.ylabel("Angle")
+    plt.legend()
+    plt.grid(True)
+
+plt.tight_layout()
+plt.show()
+print(">>> DONE")
+print("="*50 + "\n")
+
+# 5. Performance metric --------------------------
+print (">>> STARTING PERFORMANCE METRIC")
+rmse_per_finger = []
+r2_per_finger = []
+
+for f in range(n_fingers):
+    rmse = np.sqrt(mean_squared_error(
+        Labels_test_mean[:, f],
+        Y_test_pred[:, f]
+    ))
+    r2 = r2_score(
+        Labels_test_mean[:, f],
+        Y_test_pred[:, f]
+    )
+
+    rmse_per_finger.append(rmse)
+    r2_per_finger.append(r2)
+
+    print(f"  -> Finger {finger_names[f]}: R² = {r2:.2f} (RMSE = {rmse:.2f})")
+print("="*50 + "\n")
+
+# 6. Stability -----------------------------------
+print (">>> STARTING STABILITY")
+plt.figure(figsize=(8, 4))
+plt.bar(finger_names, rmse_per_finger)
+plt.ylabel("RMSE (angle units)")
+plt.title("Regression error across finger joints")
+plt.grid(True)
+plt.show()
+
